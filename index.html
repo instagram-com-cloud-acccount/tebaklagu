@@ -527,29 +527,43 @@ const ST={phase:null,qKey:'',myLocked:false,replays:2,cereSeen:new Set(),snap:nu
 async function api(action,extra){
   const body=Object.assign({action,pid:PID,token:TOKEN,room:CODE},extra||{});
   const r=await fetch('/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const j=await r.json();
+  const txt=await r.text();
+  let j;
+  try{j=JSON.parse(txt)}
+  catch(e){
+    // biasanya ini 404 HTML: endpoint /api tidak ada di host ini
+    throw new Error('Endpoint /api tidak merespons (HTTP '+r.status+'). Cek deployment.');
+  }
   if(!j.ok)throw new Error(j.err||'Gagal, coba lagi');
   return j;
 }
+/* Polling state. Vercel serverless tidak bisa SSE, jadi klien menarik
+   /api?action=poll tiap POLL_MS. Cukup ringan: satu JSON kecil per tarikan. */
+const POLL_MS=1200;
+let POLL_T=null,POLL_BUSY=false,connWarn=false;
 function listen(){
-  if(ES)ES.close();
-  ES=new EventSource('/sse?room='+encodeURIComponent(CODE)+'&pid='+encodeURIComponent(PID)+'&token='+encodeURIComponent(TOKEN));
-  ES.onmessage=e=>{
-    let d;try{d=JSON.parse(e.data)}catch(err){return}
-    if(d.now)SRV_OFF=d.now-Date.now();
-    connWarn=false;
-    if(d.type==='state')applySnap(d.s);
-    else if(d.type==='prep')prepProgress(d.done,d.total);
-    else if(d.type==='toast')toast(d.msg,d.icn);
-    else if(d.type==='dead'){killConn();toast('Room dibubarkan (host pergi)','unplug');goHome()}
+  killConn();
+  const tickPoll=async()=>{
+    if(!CODE||!PID||!TOKEN)return;
+    if(POLL_BUSY)return;
+    POLL_BUSY=true;
+    try{
+      const qs='action=poll&room='+encodeURIComponent(CODE)+
+        '&pid='+encodeURIComponent(PID)+'&token='+encodeURIComponent(TOKEN);
+      const r=await fetch('/api?'+qs,{cache:'no-store'});
+      const j=await r.json();
+      if(j&&j.ok&&j.s){connWarn=false;applySnap(j.s)}
+      else if(j&&!j.ok&&/bubar|keluar/i.test(j.err||'')){
+        killConn();toast('Room dibubarkan','unplug');goHome();return;
+      }
+    }catch(e){
+      if(!connWarn){connWarn=true;toast('Koneksi goyang... nyambung ulang','wifi-off')}
+    }finally{POLL_BUSY=false}
   };
-  ES.onerror=()=>{
-    if(connWarn)return;connWarn=true;
-    toast('Koneksi goyang... nyambung ulang','wifi-off');
-  };
+  tickPoll();
+  POLL_T=setInterval(tickPoll,POLL_MS);
 }
-let connWarn=false;
-function killConn(){if(ES){ES.close();ES=null}}
+function killConn(){if(POLL_T){clearInterval(POLL_T);POLL_T=null}POLL_BUSY=false}
 
 /* ---------- layar ---------- */
 function showScr(id){$$('.scr').forEach(s=>s.classList.remove('on'));$('#'+id).classList.add('on')}
