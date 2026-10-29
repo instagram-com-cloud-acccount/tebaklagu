@@ -436,9 +436,6 @@ async function handleApi(b){
       room.players.forEach(p=>{p.score=0;p.sp=0;p.spectate=false});
       room.round=0;room.results=null;room.activeIdx=0;room.phase='lobby';
       room.lastRows=[];room.podStats=[];
-      room.q=null;room.qEndsAt=0;room.countEnds=0;room.revealEnds=0;
-      room.locked=new Set();room.graded={};room.botPlan=[];
-      room.touched=Date.now();
     }
     return {ok:true,s:snap(room)};
   }
